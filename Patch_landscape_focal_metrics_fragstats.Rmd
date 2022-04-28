@@ -1,0 +1,929 @@
+---
+title: "FSIM_spatial_analysis"
+author: "Claire Tortorelli"
+date: "12/20/2020"
+output: html_document
+---
+
+# Spatial patterns of Fire: Patch and landscape scripts
+
+
+### Set up
+```{r setup, include=FALSE}
+library(tidyverse)
+library(raster)
+library(landscapemetrics)
+library(here)
+library(ggplot2)
+library(cowplot)
+library(grid)
+library(gridExtra) 
+library(mgcv)
+```
+
+
+
+read in RData
+```{r}
+load(here("saptialcsv_rawdata", "AllData_wFIL_120m_point_extract_cleaned.RData")) 
+#dfsub
+```
+
+
+Covert to spatial data
+```{r}
+# #convert to spatial points
+coords <- data.frame(dfsub[,3:4])
+sp = SpatialPoints(coords) #projection: NAD_1983_USFS_R6_Albers;  coordinate system:GCS_North_American_1983 
+# crs = 
+spdf = SpatialPointsDataFrame(sp, dfsub)
+
+
+```
+
+
+
+
+
+Create function to create rasters from different spatial points for each burn metric
+```{r}
+#convert spatial df to raster
+
+#function to create raster from coordinates
+coords2raster <- function(z.input, xy){ 
+      #absdif = absolute difference fire metric vector from dfsu; 
+      #xy = are x and y coordinates from entire study area
+
+      #set raster value to difference in fire behavior metric
+      xy$Z <- z.input
+  
+      #convert to raster from coordinates
+      raster_output <- rasterFromXYZ(xy)
+}
+```
+
+create rasters for burn metrics (absolute difference)
+```{r}
+
+BPraster <- coords2raster(dfsub$difBP, coords) #difference in BP
+#plot(BPraster)
+
+F4raster <- coords2raster(dfsub$difFILg4, coords) #differnece in bp>1.2m (4ft)
+
+
+F8raster <- coords2raster(dfsub$difFIL8, coords) #BP 2.4m raster (8ft)
+```
+
+create rasters for burn metrics (absolute difference)
+```{r}
+
+BP_10raster <- coords2raster(dfsub$foa10BP, coords) # BP invaded run
+BP_12raster <- coords2raster(dfsub$foa12BP, coords) #BP uninvaded run
+
+F4_10raster <- coords2raster(dfsub$foa10FILg4, coords) #BP>1.2m invaded run
+F4_12raster <- coords2raster(dfsub$foa12FILg4, coords) #BP>1.2m uninvaded run
+
+
+F8_12raster <- coords2raster(dfsub$foa12FIL8, coords) #BP>2.4m uninvaded run
+F8_10raster <- coords2raster(dfsub$foa10FIL8, coords) #BP>2.4m invaded run
+```
+
+## Patch analysis
+
+create raster for invaded/ fuel altered status (1 = fuels were altered to reflect invasion)
+```{r}
+#add zeros to indicate univaded areas
+dfsub$alteredFM2[is.na(dfsub$alteredFM2)] <- 0
+
+#extract invaded status into new raster
+invraster_BME <- coords2raster(dfsub$alteredFM2, coords)
+#plot(invraster_BME)
+```
+
+
+Extract invaded areas to separate raster for patch size calculations
+```{r}
+#extract coordinates for just invaded areas
+spdf_invaded <- dfsub[which(dfsub$alteredFM2 == 1),]
+coords_invaded <- spdf_invaded[,3:4]
+
+#convert to spatial points
+sp_invaded = SpatialPoints(coords_invaded)
+
+invraster <- coords2raster(spdf_invaded$alteredFM2, coords_invaded)
+plot(invraster)
+
+```
+
+### Calcualte patch area
+```{r}
+library(landscapemetrics)
+#calculate area of each invaded patch in hectares, Queens case
+#extract patch area for invaded patches 
+pts_extract <- extract_lsm(invraster, y=spdf, what ="lsm_p_area", directions = 8) 
+
+# area values are reported in hectares
+
+pts_extract$area <- pts_extract$value #assign patch area column 
+
+```
+
+
+extract absolute difference fire metric raster values to invaded spatial points 
+```{r}
+#extract difference in burn probability to invaded patches with area measurements
+pts_extract$bp_dif <- raster::extract(BPraster, sp_invaded) 
+pts_extract$F4_dif <- raster::extract(F4raster, sp_invaded) 
+
+#RawBP& FIL4
+pts_extract$foa10BP <- raster::extract(BP_10raster, sp_invaded) 
+pts_extract$foa12BP <- raster::extract(BP_12raster, sp_invaded) 
+pts_extract$foa10F4 <- raster::extract(F4_10raster, sp_invaded) 
+pts_extract$foa12F4 <- raster::extract(F4_12raster, sp_invaded) 
+```
+
+calculate mean burn metric for each patch
+```{r}
+#average fire metrics by patch ids
+pts_extractdf <- data.frame(pts_extract)
+
+patch_means <- pts_extractdf %>% 
+  group_by(id) %>%
+  summarise(meanbp_dif = mean(bp_dif),
+            meanF4_dif = mean(F4_dif),
+            meanBP_10 = mean(foa10BP),
+            meanBP_12 = mean(foa12BP),
+            meanF4_10 = mean(foa10F4),
+            meanF4_12 = mean(foa12F4),
+            area = mean(area))
+
+summary(patch_means)
+```
+
+### Model burn metric ~ patch size with GAM
+
+Absolute dif. in BP
+```{r}
+mod_gamBPpatch <- gam(meanbp_dif ~ s(log(area), bs="cr"), data=patch_means)
+#mod_lmBP <- lm(meanbp_dif ~ log(area), data=patch_means)
+#no sig difference between lm and gam, but gam appears to fit the data better at higher patch sizes
+
+summary(mod_gamBPpatch)
+
+newdat <- data.frame(area = c(1.44, 2.88, 150, 8650))
+predict(mod_gamBPpatch, newdat)
+#range between 0.0009645974 and 0.0040767319 
+```
+
+model absolute dif. in BP>1.2m (FIL>4prob)
+```{r}
+mod_gamF4patch <- gam(meanF4_dif ~ s(log(area), bs="cr"), data=patch_means)
+
+summary(mod_gamF4patch)
+
+predict(mod_gamF4patch, newdat)
+#range between 0.19 and 0.33 for the smallest and largest patches
+```
+
+model response by simulation
+```{r}
+mod_gamBP10patch <- gam(meanBP_10 ~ s(log(area), bs="cr"), data=patch_means)
+mod_gamBP12patch <- gam(meanBP_12 ~ s(log(area), bs="cr"), data=patch_means)
+mod_gamF410patch <- gam(meanF4_10 ~ s(log(area), bs="cr"), data=patch_means)
+mod_gamF412patch <- gam(meanF4_12 ~ s(log(area), bs="cr"), data=patch_means)
+
+newdat_patch <- data.frame(area = 12)
+
+predict(mod_gamBP10patch, newdat_patch) 
+predict(mod_gamBP12patch, newdat_patch) 
+(0.007591036  - 0.006158522 ) / 0.006158522 
+
+```
+
+
+### plot patch relationships with changes in burn metrics
+```{r}
+plot_patch <- function(y.var){
+  ggp <- ggplot(data = patch_means, 
+                aes(x = log(area), y = y.var))+
+  #geom_jitter(alpha = .3, color = "#883C0C")+
+  geom_smooth(method = NULL, color = "black")+
+  theme_bw(base_size = 13)+
+  xlab("") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+      theme(plot.title = element_text(hjust = 0.5))
+  
+  
+  return(ggp)
+}
+
+#`geom_smooth()` using method = 'gam' and formula 'y ~ s(x, bs = "cs")' for large sample size
+```
+
+
+```{r}
+p1 <- plot_patch(patch_means$meanbp_dif) + ylab("BP (dif.)")
+
+p2 <- plot_patch(patch_means$meanF4_dif) + labs(y=expression("BP"[">1.2m"]*" (dif.)"), x = "")
+
+(ggbp_patch <- ggplot(data = patch_means, aes(x = log(area), y = meanBP_10))+
+  #geom_jitter(alpha = .5, size = 2)+
+     geom_smooth(method = NULL, color = "#cc5500") +
+    geom_smooth(method= NULL, color = "#323232", linetype = "dashed", aes(y = meanBP_12)) +
+  theme_bw(base_size = 13)+
+  #scale_color_manual(values = colors)+ #colors for vegtypes
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  xlab("")+
+  ylab("BP")+
+  theme(plot.title = element_text(hjust = 0.5))
+)
+
+(ggflep_patch <- ggplot(data = patch_means, aes(x = log(area), y = meanF4_10))+
+  #geom_jitter(alpha = .5, size = 2)+
+     geom_smooth(method = NULL, color = "#cc5500") +
+    geom_smooth(method= NULL, color = "#323232", linetype = "dashed", aes(y = meanF4_12)) +
+  theme_bw(base_size = 13)+
+  #scale_color_manual(values = colors)+ #colors for vegtypes
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(y=expression("BP"[">1.2m"]), x = "")+
+  theme(plot.title = element_text(hjust = 0.5))
+)
+
+
+
+```
+
+
+
+Combine plots
+```{r fig.height=4, fig.width=6}
+
+#create common x axis label
+x.grob <- textGrob("invaded patch size (log ha)", vjust = -0.5)
+
+#combine plots
+p_all <- plot_grid(ggbp_patch, ggflep_patch, p1, p2  + theme(legend.position = "none"),
+                    ncol = 2,
+                    nrow = 2,
+                    labels = c('(a)', '(b)', '(c)', '(d)'),
+                    label_x = 0, label_y = 0,
+                    hjust  = -0.5, vjust = -2.5)
+
+p <- plot_grid(p_all, nrow = 2, rel_heights = c(1, .1))
+```
+
+save plot
+```{r}
+# svg(file = 'invaded_patchsizeGAM_all.svg', width = 6, height = 6) 
+# 
+# #add common x label
+# grid.arrange(arrangeGrob(p_all, bottom = x.grob))
+# 
+# dev.off()
+```
+
+
+-----------------------------------------------------------------------------------
+
+## Focal Neighborhood analysis
+
+
+Calculate neighborhood metrics for all invaded pixels - this is the amount of invasion within 116.6 hectares. We chose this neighborhood size to reflect "large" fire sizes included in the transition analysis. 
+```{r}
+
+focal <- raster::focal(invraster_BME, w=matrix(1/9^2,nrow=9,ncol=9), na.rm = TRUE) #sum of focal neighborhood in number of cells - a 5x5 cell kernel–centered on the cell whose value is being estimated. - this needs to be an odd number of cells
+
+#120m x 5 cells = 600m row and 600m cols = 360,000 m^2 = 36 hectares
+#120m x 7 cells = 840m row and 840m cols = 705,600 m^2 = 70.56 hectares
+#120m x 9 cells = 1080m row and 1080m cols = 1,166,400m^2 = 116.64 hectares
+
+
+plot(focal) #plots neighborhood map. 
+# plot(invraster_BME)
+
+
+#summary(focal)
+```
+
+plot relationship between difference in burn probability and amount of invaded cells within neighborhood
+
+extract values from focal raster to spatial dataframe
+```{r}
+#extract difference in burn probability to invaded patches with area measurements
+spdf$focal_inv <- raster::extract(focal, sp) 
+
+#subset so only areas with > 0 invaded area within  neighborhood are included in analysis/plot
+spdf_sub <- data.frame(spdf[which(spdf$focal_inv > 0),])
+
+
+
+#keep only forested areas
+spdf_forest <- data.frame(spdf_sub[which(spdf_sub$reclass == "Open tree canopy" | spdf_sub$reclass == "Closed tree canopy"),])
+
+summary(spdf_sub$alteredFM2)
+
+#remove invaded focal cells from analysis
+#spdf_forestuninv <- data.frame(spdf_forest[which(spdf_forest$alteredFM2 == 0),])
+spdf_forestuninv <- data.frame(spdf_forest[is.na(spdf_forest$alteredFM2),])
+
+```
+
+### model relationships using GAM
+
+
+Absolute dif. for burn metrics
+
+
+```{r}
+mod_gamBP <- gam(difBP ~ s(focal_inv, bs="cr"), data=spdf_forestuninv)
+mod_gamF4 <- gam(difFILg4 ~ s(focal_inv, bs="cr"), data=spdf_forestuninv)
+mod_gamF8 <- gam(difFIL8 ~ s(focal_inv, bs="cr"), data=spdf_forestuninv)
+
+#summary(mod_gamF4)
+
+newdat2 <- data.frame(focal_inv = c(0, .25, .50, .100))
+
+predict(mod_gamBP, newdat2) #0, 25%, 50%, 75% invaded
+predict(mod_gamF4, newdat2)
+predict(mod_gamF8, newdat2)
+
+# summary(mod_gamBP)
+# summary(mod_gamF4)
+# summary(mod_gamF8)
+```
+
+Predict values of BP and FLEP at differnet prop. invaded levels
+```{r}
+mod_gambpfoa10 <- gam(foa10BP ~ s(focal_inv, bs="cr"), data=spdf_forestuninv)
+mod_gambpfoa12 <- gam(foa12BP ~ s(focal_inv, bs="cr"), data=spdf_forestuninv)
+
+# preds3 <- data.frame(focal_inv = c(.10, .99))
+# predict(mod_gambpfoa10, preds3)
+# predict(mod_gambpfoa12, preds3)
+
+#10% invaded
+(0.008225450 - 0.007144289)  / 0.007144289 #15%
+#99 % invaded
+(0.008553486  - 0.003755020 ) / 0.003755020 #128%
+
+predict(mod_gambpfoa10, newdat2)
+predict(mod_gambpfoa12, newdat2)
+
+#25% invaded
+(0.008255165   - 0.006431149  )/0.006431149  #0.0018;  28.3% increase
+
+#50% invaded
+(0.007701514   - 0.004877590   )/ 0.004877590   #0.0028; 57.9% increase
+
+#repeat for BP >1.2m
+
+mod_gamF4foa10 <- gam(foa10FILg4 ~ s(focal_inv, bs="cr"), data=spdf_forestuninv)
+mod_gamF4foa12 <- gam(foa12FILg4 ~ s(focal_inv, bs="cr"), data=spdf_forestuninv)
+
+
+predict(mod_gamF4foa10, newdat2)
+predict(mod_gamF4foa12, newdat2)
+
+#25% invaded
+(0.5623945 - 0.5172844 )/0.5172844  #0.045; 8.7%
+
+#50% invaded
+(0.5996320   - 0.5085584   )/ 0.5085584   #0.0910; 17.9%
+
+#repeat for BP >2.4m
+
+mod_gamF8foa10 <- gam(foa10FIL8 ~ s(focal_inv, bs="cr"), data=spdf_forestuninv)
+mod_gamF8foa12 <- gam(foa12FIL8 ~ s(focal_inv, bs="cr"), data=spdf_forestuninv)
+
+
+predict(mod_gamF8foa10, newdat2)
+predict(mod_gamF8foa12, newdat2)
+
+#25% invaded
+(0.09645647  - 0.08283168 )/0.08283168  #0.0136; 16.4%
+
+#50% invaded
+(0.09610471  - 0.06731635  )/ 0.06731635  #0.0287; 42.7%
+```
+
+### Plot focal neighborhood for forested areas
+
+
+plot neighborhood function
+```{r}
+
+#colors <- c("#386641", "#598B2C")
+
+p_neighborhood <- function(y.var){
+  ggp <- ggplot(data = spdf_forestuninv, aes(x = focal_inv, y = y.var))+
+  #geom_jitter(alpha = .5, size = 2)+
+     geom_smooth(method = NULL, color = "black") +
+  theme_bw(base_size = 13)+
+  #scale_color_manual(values = colors)+ #colors for vegtypes
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed")+
+  xlab("")+
+  ylab("")+
+  theme(plot.title = element_text(hjust = 0.5))
+  
+  return(ggp)
+  }
+
+#using `geom_smooth()` method = 'gam' and formula 'y ~ s(x, bs = "cs")' to account for large sample size
+```
+
+plot burn metric (absolute difference) response to focal neighborhood
+```{r}
+p_forestBPdif <- p_neighborhood(spdf_forestuninv$difBP) + ylab("BP (dif.)") + theme(legend.position = "none")
+
+p_forestF4dif <- p_neighborhood(spdf_forestuninv$difFILg4) + labs(y=expression("BP"[">1.2m"]*" (dif.)"), x = "")
+
+p_forestF8dif <- p_neighborhood(spdf_forestuninv$difFIL8) + labs(y=expression("BP"[">2.4m"]*" (dif.)"), x = "")
+
+
+#plot raw BP and FLEP1.2m values for the focal forested cells
+
+
+p_forestBP <- ggplot(data = spdf_forestuninv, aes(x = focal_inv, y = foa10BP))+
+  #geom_jitter(alpha = .5, size = 2)+
+     geom_smooth(method = NULL, color = "#cc5500") +
+    geom_smooth(method= NULL, color = "#323232", linetype = "dashed", aes(y = foa12BP)) +
+  theme_bw(base_size = 13)+
+  #scale_color_manual(values = colors)+ #colors for vegtypes
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  xlab("")+
+  ylab("BP")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+p_forestF4 <- ggplot(data = spdf_forestuninv, aes(x = focal_inv, y = foa10FILg4))+
+  #geom_jitter(alpha = .5, size = 2)+
+     geom_smooth(method = NULL, color = "#cc5500") +
+    geom_smooth(method= NULL, color = "#323232", linetype = "dashed", aes(y = foa12FILg4)) +
+  theme_bw(base_size = 13)+
+  #scale_color_manual(values = colors)+ #colors for vegtypes
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(y=expression("BP"[">1.2m"]), x = "")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+p_forestF8 <- ggplot(data = spdf_forestuninv, aes(x = focal_inv, y = foa10FIL8))+
+  #geom_jitter(alpha = .5, size = 2)+
+     geom_smooth(method = NULL, color = "#cc5500") +
+    geom_smooth(method= NULL, color = "#323232", linetype = "dashed", aes(y = foa12FIL8)) +
+  theme_bw(base_size = 13)+
+  #scale_color_manual(values = colors)+ #colors for vegtypes
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(y=expression("BP"[">2.4m"]), x = "")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+```
+
+
+
+
+
+Combine plots
+```{r fig.height=4, fig.width=8}
+
+#create common x axis label
+x.grob2 <- textGrob("Proportion of forest neighborhood invaded", vjust = -1)
+
+
+#combine plots
+p_allforest <- plot_grid(p_forestBP, p_forestF4, p_forestF8, p_forestBPdif, p_forestF4dif, p_forestF8dif + theme(legend.position = "none"),
+                    ncol = 3,
+                    nrow = 2,
+                    labels = c('(a)', '(b)', '(c)', '(d)', '(e)', '(f)'),
+                    label_x = 0, label_y = 0,
+                    hjust  = -0.5, vjust = -2.5)
+
+p <- plot_grid(p_allforest, nrow = 1, rel_heights = c(1, .2))
+```
+
+save plot
+```{r}
+# svg(file = 'focal_neighborhood116haGAM_all.svg', width = 7.8, height = 5.2) 
+# 
+# #add common x label
+# grid.arrange(arrangeGrob(p, bottom = x.grob2))
+# 
+# dev.off()
+```
+
+
+
+-------------------------------------------------------------------------------------
+
+###  Calculate landscape fire change ~ propotion of invaded landscape
+
+
+Average landscape burn metrics for 9x9 pixel landscape ~1000x1000m
+
+```{r}
+
+landscape_BP <- raster::focal(BPraster, fun = "mean", w=matrix(1,9,9), na.rm = TRUE) #focal areas with NA in the neighborhood have mean values as NA
+landscape_F4 <- raster::focal(F4raster, fun = "mean", w=matrix(1,9,9), na.rm = TRUE)
+landscape_F8 <- raster::focal(F8raster, fun = "mean", w=matrix(1,9,9), na.rm = TRUE)
+
+
+```
+
+plot relationship between difference in neighborhood burn metrics  and amount of invaded cells within 116.6ha
+
+extract values from focal raster to spatial dataframe
+```{r}
+#extract difference in neighborhood burn metrics to the spatial dataframe
+spdf$landscape_BP <- raster::extract(landscape_BP, sp) 
+spdf$landscape_F4 <- raster::extract(landscape_F4, sp) 
+spdf$landscape_F8 <- raster::extract(landscape_F8, sp) 
+
+
+#subset so only areas with > 0 invaded area within neighborhood are included in plot
+spdf_sub <- data.frame(spdf[which(spdf$focal_inv > 0),])
+#summary(spdf_sub)
+
+```
+
+
+### Plot landscape neighborhood change
+
+plot neighborhood function
+```{r}
+
+#colors <- c("#386641", "#598B2C")
+
+p_landscape <- function(y.var){
+  ggp <- ggplot(data = spdf_sub, aes(x = focal_inv, y = y.var))+
+  #geom_jitter(alpha = .5, size = 2)+
+     geom_smooth(method = NULL, color = "black") +
+  theme_bw(base_size = 13)+
+  #scale_color_manual(values = colors)+ #colors for vegtypes
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed")+
+  xlab("")+
+  ylab("")+
+  theme(plot.title = element_text(hjust = 0.5))
+  
+  return(ggp)
+  }
+
+#using `geom_smooth()` method = 'gam' and formula 'y ~ s(x, bs = "cs")' to account for large sample size
+```
+
+plot burn metric (absolute difference) response to landscape neighborhood
+```{r}
+p_landscapeBPdif <- p_landscape(spdf_sub$landscape_BP) + ylab("BP (dif.)") + theme(legend.position = "none")
+
+p_landscapeF4dif <- p_landscape(spdf_sub$landscape_F4) + labs(y=expression("BP"[">1.2m"]*" (dif.)"), x = "") + theme(legend.position = "none")
+
+p_landscapeF8dif <- p_landscape(spdf_sub$landscape_F8) + labs(y=expression("BP"[">2.4m"]*" (dif.)"), x = "") + theme(legend.position = "none")
+
+
+
+```
+
+
+
+### Plot landscape BP for the invaded and univnaded simulations against prop invaded to explain decrease from 0.75-1
+
+
+
+Average landscape burn metrics for 9x9 pixel landscape ~1000x1000m
+
+```{r}
+
+landscape_BP10 <- raster::focal(BP_10raster, fun = "mean", w=matrix(1,9,9), na.rm = TRUE) #focal areas with NA in the landscape have mean values as NA
+landscape_BP12 <- raster::focal(BP_12raster, fun = "mean", w=matrix(1,9,9), na.rm = TRUE) 
+
+#repeat for BP>1.2m
+landscape_f410 <- raster::focal(F4_10raster, fun = "mean", w=matrix(1,9,9), na.rm = TRUE) 
+landscape_f412 <- raster::focal(F4_12raster, fun = "mean", w=matrix(1,9,9), na.rm = TRUE) 
+
+#repeat for BP>2.4m
+landscape_f810 <- raster::focal(F8_10raster, fun = "mean", w=matrix(1,9,9), na.rm = TRUE) 
+landscape_f812 <- raster::focal(F8_12raster, fun = "mean", w=matrix(1,9,9), na.rm = TRUE) 
+
+```
+
+extract values from focal raster to spatial dataframe
+```{r}
+#extract difference in landscape burn metrics to the spatial dataframe
+spdf$landscape_BP10 <- raster::extract(landscape_BP10, sp) 
+spdf$landscape_BP12 <- raster::extract(landscape_BP12, sp) 
+spdf$landscape_f410 <- raster::extract(landscape_f410, sp) 
+spdf$landscape_f412 <- raster::extract(landscape_f412, sp) 
+
+#for BP>2.4
+spdf$landscape_f810 <- raster::extract(landscape_f810, sp) 
+spdf$landscape_f812 <- raster::extract(landscape_f812, sp) 
+
+
+
+#subset so only areas with > 0 invaded area within neighborhood are included in plot
+spdf_sub <- data.frame(spdf[which(spdf$focal_inv > 0),])
+#summary(spdf_sub)
+```
+
+```{r}
+
+
+p_landscapeBP <- ggplot(data = spdf_sub, aes(x = focal_inv, y = landscape_BP10))+
+  #geom_jitter(alpha = .5, size = 2)+
+     geom_smooth(method = NULL, color = "#cc5500") +
+    geom_smooth(method= NULL, color = "#323232", linetype = "dashed", aes(y = landscape_BP12)) +
+  theme_bw(base_size = 13)+
+  #scale_color_manual(values = colors)+ #colors for vegtypes
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  xlab("")+
+  ylab("BP")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+p_landscapeF4 <- ggplot(data = spdf_sub, aes(x = focal_inv, y = landscape_f410))+
+  #geom_jitter(alpha = .5, size = 2)+
+     geom_smooth(method = NULL, color = "#cc5500") +
+    geom_smooth(method= NULL, color = "#323232", linetype = "dashed", aes(y = landscape_f412)) +
+  theme_bw(base_size = 13)+
+  #scale_color_manual(values = colors)+ #colors for vegtypes
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(y=expression("BP"[">1.2m"]), x = "") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+p_landscapeF8 <- ggplot(data = spdf_sub, aes(x = focal_inv, y = landscape_f810))+
+  #geom_jitter(alpha = .5, size = 2)+
+     geom_smooth(method = NULL, color = "#cc5500") +
+    geom_smooth(method= NULL, color = "#323232", linetype = "dashed", aes(y = landscape_f812)) +
+  theme_bw(base_size = 13)+
+  #scale_color_manual(values = colors)+ #colors for vegtypes
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(y=expression("BP"[">2.4m"]), x = "") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+```
+
+
+Combine plots
+```{r fig.height=4, fig.width=8}
+
+#create common x axis label
+x.grob2 <- textGrob("Proportion of landscape invaded", vjust = -1)
+
+
+#combine plots
+p_alllandscape <- plot_grid(p_landscapeBP, p_landscapeF4, p_landscapeF8, p_landscapeBPdif, p_landscapeF4dif, p_landscapeF8dif + theme(legend.position = "none"),
+                    ncol = 3,
+                    nrow = 2,
+                    labels = c('(a)', '(b)', '(c)', '(d)', '(e)', '(f)'),
+                    label_x = 0, label_y = 0,
+                    hjust  = -0.5, vjust = -2.5)
+
+p <- plot_grid(p_alllandscape, nrow = 1, rel_heights = c(1, .2))
+```
+
+save plot
+```{r}
+# svg(file = 'Landscapeneighborhood_burn_metrics_ALL.svg', width = 7.8, height = 5.2) 
+# 
+# #add common x label
+# grid.arrange(arrangeGrob(p, bottom = x.grob2))
+# 
+# dev.off()
+```
+
+
+
+### model relationships with a GAM
+
+```{r}
+#difference plots
+mod_gamBP_landscape <- gam(landscape_BP ~ s(focal_inv, bs="cr"), data=spdf_sub)
+mod_gamF4_landscape <- gam(landscape_F4 ~ s(focal_inv, bs="cr"), data=spdf_sub)
+mod_gamF8_landscape <- gam(landscape_F8 ~ s(focal_inv, bs="cr"), data=spdf_sub)
+
+summary(mod_gamF8_landscape)
+
+#model by simulation
+mod_gamF4foa10_landscape <- gam(landscape_f410 ~ s(focal_inv, bs="cr"), data=spdf_sub)
+mod_gamF4foa12_landscape <- gam(landscape_f412 ~ s(focal_inv, bs="cr"), data=spdf_sub)
+
+mod_gambpfoa10_landscape <- gam(landscape_BP10 ~ s(focal_inv, bs="cr"), data=spdf_sub)
+mod_gambpfoa12_landscape <- gam(landscape_BP12 ~ s(focal_inv, bs="cr"), data=spdf_sub)
+
+mod_gamF8foa10_landscape <- gam(landscape_f810 ~ s(focal_inv, bs="cr"), data=spdf_sub)
+mod_gamF8foa12_landscape <- gam(landscape_f812 ~ s(focal_inv, bs="cr"), data=spdf_sub)
+
+
+#BP
+predict(mod_gamBP_landscape, newdat2) #0, .25, .5, .75 prop landscape invaded
+predict(mod_gambpfoa10_landscape, newdat2)
+predict(mod_gambpfoa12_landscape, newdat2)
+
+#percent increase for 25% invaded
+(0.007476936 - 0.005803749) /0.005803749 #0.00167; 28.9%
+#percent increase for 50% invaded
+(0.007819384 -0.005073787 )/0.005073787 #0.0027; 54%
+
+#BP>1.2m
+predict(mod_gamF4foa10_landscape, newdat2)
+predict(mod_gamF4foa12_landscape, newdat2)
+
+#percent increase for 25% invaded
+(0.5585844 -0.4610107 ) / 0.4610107 #0.098; 21%
+#percent increase for 50% invaded
+(0.6281319 -0.4441728 )/0.4441728 # 0.184; 41%
+
+#BP(>2.4m)
+predict(mod_gamF8foa10_landscape, newdat2)
+predict(mod_gamF8foa12_landscape, newdat2)
+
+#percent increase for 25% invaded
+(0.06331901 -0.05450178  ) / 0.05450178  #0.0088; 16%
+#percent increase for 50% invaded
+(0.06640312  -0.04495431  )/0.04495431  # 0.021; 47.7%
+
+```
+
+
+### Extract coef and r2 from gams
+```{r}
+#examine fit
+gam.check(mod_gamF8foa12_landscape)
+
+#combine gams into list
+
+
+modlist <- list(mod_gamBP_landscape,  mod_gamF4_landscape, mod_gamF8_landscape,
+             mod_gambpfoa10_landscape, mod_gambpfoa12_landscape,
+             mod_gamF4foa10_landscape, mod_gamF4foa12_landscape, 
+             mod_gamF8foa10_landscape, mod_gamF8foa12_landscape, 
+            mod_gamBP, mod_gamF4, mod_gamF8, #focal forest
+            mod_gambpfoa10, mod_gambpfoa12, 
+            mod_gamF4foa10, mod_gamF4foa12, 
+            mod_gamF8foa10, mod_gamF8foa12,
+            mod_gamBPpatch, mod_gamF4patch, #patch
+            mod_gamBP10patch,mod_gamBP12patch,
+            mod_gamF410patch, mod_gamF412patch)#landscape
+
+modnames <- c("landscape BP dif.",  "landscape CBP>1.2m dif.", "landscape CBP>2.4m dif.",
+             "invaded landscape BP", "uninvaded landscape BP",
+             "invaded landscape CBP>1.2m", "uninvaded landscape CBP>1.2m", 
+             "invaded landscape CBP>2.4m", "uninvaded landscape CBP>2.4m", 
+            "forest BP dif.", "forest CBP>1.2m dif." , "forest CBP>2.4m dif", #focal forest
+            "invaded forest BP", "uninvaded forest BP", 
+            "invaded forest CBP>1.2m", "uninvaded forest CBP>1.2m", 
+            "invaded forest CBP>2.4m", "uninvaded forest CBP>2.4m",
+            "patch BP dif.", "patch CBP>1.2m dif.", #patch
+            "invaded patch BP dif.", "uninvaded patch BP dif.",
+            "invaded patch CBP>1.2m", "uninvaded patch CBP>1.2m")#landscape
+
+
+texreg1 <- htmlreg(modlist, 
+                single.row = T,
+                custom.model.names = modnames,
+                leading.zero = F,
+                digits = 3,
+                file = 'gams.doc')
+
+summary(mod_gamF410patch)
+```
+
+
+             mod_gambpfoa10_landscape, mod_gambpfoa12_landscape,
+             mod_gamF4foa10_landscape, mod_gamF4foa12_landscape, 
+             mod_gamF8foa10_landscape, mod_gamF8foa12_landscape, 
+            mod_gamBP, mod_gamF4, mod_gamF8, #focal forest
+            mod_gambpfoa10, mod_gambpfoa12, 
+            mod_gamF4foa10, mod_gamF4foa12, 
+            mod_gamF8foa12, mod_gamF8foa10,
+            mod_gamBPpatch, mod_gamF4patch, #patch
+            mod_gamBP10patch,mod_gamBP12patch,
+            mod_gamF410patch, mod_gamF412patch)
+
+---------------------------------------------------------------------------------
+### Landscape Focal Analysis with only uninvaded areas
+
+There wasn't much difference in BP when we removed the invaded areas from the analysis. we're not using this analysis in the paper 
+
+mask out invaded pixels from burn metric rasters
+```{r}
+
+#mask
+BPrastersub <- mask(BPraster, invraster_BME, maskvalue = 1)
+plot(BPrastersub)
+
+F4rastersub <- mask(F4raster, invraster_BME, maskvalue = 1)
+
+FLBPrastersub <- mask(FLBPraster, invraster_BME, maskvalue = 1)
+
+```
+
+
+Average landscape burn metrics for 9x9 pixel landscape (without invaded pixels)
+
+```{r}
+focal_BPsub <- raster::focal(BPrastersub, fun = "mean", w=matrix(1,9,9), na.rm = TRUE) 
+focal_F4sub <- raster::focal(F4rastersub, fun = "mean", w=matrix(1,9,9), na.rm = TRUE)
+focal_FLBPsub <- raster::focal(FLBPrastersub, fun = "mean", w=matrix(1,9,9), na.rm = TRUE)
+
+plot(focal_BPsub)
+```
+
+plot relationship between difference in neighborhood burn metrics  and amount of invaded cells within 1000m
+
+extract values from focal raster to spatial dataframe
+```{r}
+#extract focal burn metrics to the spatial dataframe
+spdf$focal_BPsub <- raster::extract(focal_BPsub, sp) 
+spdf$focal_F4sub <- raster::extract(focal_F4sub, sp) 
+spdf$focal_FLBPsub <- raster::extract(focal_FLBPsub, sp) 
+
+
+#subset so only areas with > 0 invaded area within neighborhood are included in plot
+spdf_sub <- data.frame(spdf[which(spdf$focal_inv > 0),])
+#summary(spdf_sub)
+
+```
+
+
+### Plot neighborhood (without invaded areas)
+
+
+plot burn metric (absolute difference) response to focal neighborhood - with invaded areas removed
+```{r}
+p4n <- p_neighborhood2(spdf_sub$focal_BPsub) + ylab("BP (dif.)") + theme(legend.position = "none")
+
+p5n <- p_neighborhood2(spdf_sub$focal_F4sub) + ylab("FLEP>1.2m (dif.)") + theme(legend.position = "none")
+
+p6n <- p_neighborhood2(spdf_sub$focal_FLBPsub) + ylab("joint prob (abs. dif.)") 
+
+```
+
+
+Combine plots
+```{r fig.height=4, fig.width=8}
+
+#create common x axis label
+x.grob2 <- textGrob("Proportion of neighborhood invaded", vjust = -4)
+legend2 <- get_legend(p6n + theme(legend.position = "bottom", legend.title = element_blank()))
+
+#combine plots
+p_all3n <- plot_grid(p4n, p5n, p6n  + theme(legend.position = "none"),
+                    ncol = 3,
+                    nrow = 1,
+                    labels = c('(a)', '(b)', '(c)'),
+                    label_x = 0, label_y = 0,
+                    hjust  = -0.5, vjust = -1.5)
+
+p <- plot_grid(p_all3n, legend2, nrow = 2, rel_heights = c(1, .1))
+```
+
+
+Not much different for burn probability than when invaded areas are included so did not incldude these analyses in the ms
+
+
+## Adjacent to invaded areas analysis
+
+buffer invaded areas to evaluate change in areas adjacent to invasion
+
+```{r}
+#extract invaded areas
+spinv <- spdf %>% subset(alteredFM2 == 1)
+spinv <- spinv[,c(2:4, 12)]
+
+#assign projection
+crs(spdf) <- CRS("+proj=utm +zone=11 +datum=NAD83 +units=m +no_defs")
+crs(spinv) <- CRS("+proj=utm +zone=11 +datum=NAD83 +units=m +no_defs")
+# plot(spinv)
+
+#buffer points by 3k
+spinv.buf3k <- buffer(spinv, width=3000, dissolve=TRUE)
+plot(spinv.buf3k)
+
+
+#extract points that fall within the 3k buffer
+dfextract.invbuf <- raster::intersect(spdf, spinv.buf3k)
+
+#remove invaded pixels
+dfinvbuf3k.only <- dfextract.invbuf %>% subset(is.na(alteredFM2))
+dfinvbuf3k.only <- data.frame(dfinvbuf3k.only)
+#summarize burn metrics for adjacent areas
+
+dfinvbuf3k.only %>% group_by(reclass) %>%
+  summarise(n = n(),
+            perc = n()/nrow(dfinvbuf3k.only))
+
+
+dfinvbuf3k.only %>%
+  summarize(mean_F4dif = mean(difFILg4), #calculate absolute difference FIL > 4gt
+              mean_BPdif = mean(difBP), #calculate absolute difference BP
+              mean_F8dif = mean(difFIL8),
+              F4_percdif = ((mean(foa10FILg4) - mean(foa12FILg4)) / (mean(foa12FILg4)))*100,
+              F8_percdif = ((mean(foa10FIL8) - mean(foa12FIL8)) / (mean(foa12FIL8)))*100,
+              BP_percdif = ((mean(foa10BP) - mean(foa12BP)) / (mean(foa12BP)))*100)
+
+```

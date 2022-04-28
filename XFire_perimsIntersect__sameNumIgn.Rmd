@@ -1,0 +1,224 @@
+---
+title: "XFire_perimIntersect_foa10_foa12"
+author: "Claire Tortorelli"
+date: "7/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(igraph)
+library(here)
+```
+
+Read in XFire perimieter intersect data with ignitions for fires greater than 100ha
+```{r}
+#read in FSIm run 10 perims
+foa10 <- read_csv(here("saptialcsv_rawdata", "foa10_XFirePerimsIntersect.csv"))
+
+foa12 <- read_csv(here("saptialcsv_rawdata", "foa12_XFirePerimsIntersect.csv"))
+```
+
+
+## Clean and organize data
+
+remove fires from foa10 (invaded landscape) that didn't occur in foa12 (uninvaded landscape) and vice versa for exact same ignitions fire transmission comparison 
+```{r}
+length(unique(foa10$FIRENO))#212579 ignitions
+length(unique(foa12$FIRENO))#210252 ignitions
+
+foa10sub1 <- foa10[foa10$FIRENO %in% foa12$FIRENO,]
+foa12sub1 <- foa12[foa12$FIRENO %in% foa10sub1$FIRENO,]
+
+#check to make sure the ignitions are equal
+length(unique(foa10sub1$FIRENO)) == length(unique(foa12sub1$FIRENO)) #209,078 fires
+```
+
+
+```{r}
+#remove fires that started outside the analysis area, IgnitionCode = "other"
+foa10sub <- foa10sub1[-which(foa10sub1$IgnitionCode == "Other"),]
+foa12sub <- foa12sub1[-which(foa12sub1$IgnitionCode == "Other"),]
+
+#check counts of veg types
+foa10sub %>% group_by(IgnitionCode) %>%
+  summarise(n = n())
+
+foa12sub %>% group_by(IgnitionCode) %>%
+  summarise(n = n())
+
+#remove fires that started in non-vegetated areas and burned area in non-vegetated areas
+
+foa10sub <- foa10sub[-which(foa10sub$IgnitionCode == "Non-vegetated"),]
+foa12sub <- foa12sub[-which(foa12sub$IgnitionCode == "Non-vegetated"),]
+
+foa10sub <- foa10sub[-which(foa10sub$AffectedCode == "Non-vegetated"),]
+foa12sub <- foa12sub[-which(foa12sub$AffectedCode == "Non-vegetated"),]
+
+
+
+
+
+#check counts of veg types
+foa10sub %>% group_by(IgnitionCode) %>%
+  summarise(n = n())
+
+foa12sub %>% group_by(IgnitionCode) %>%
+  summarise(n = n())
+
+foa10sub %>% group_by(AffectedCode) %>%
+  summarise(sum = sum(Shape_Area))
+
+foa12sub %>% group_by(AffectedCode) %>%
+  summarise(sum = sum(Shape_Area))
+
+#check ignitions
+length(unique(foa10sub$FIRENO)) == length(unique(foa12sub$FIRENO))
+
+```
+
+Summarize burned area (of AffectedCode) by ignition code
+```{r}
+foa10_sumArea <- foa10sub %>% group_by(IgnitionCode, AffectedCode) %>% 
+  summarise(sum_areaburned = sum(Shape_Area)) %>% data.frame(.)
+
+foa12_sumArea <- foa12sub %>% group_by(IgnitionCode, AffectedCode) %>% 
+  summarise(sum_areaburned = sum(Shape_Area)) %>% data.frame(.)
+```
+
+Prep data for graphing
+```{r}
+#flip to wide format
+foa10_sumAreaW <- spread(foa10_sumArea, AffectedCode, sum_areaburned)
+
+foa12_sumAreaW <- spread(foa12_sumArea, AffectedCode, sum_areaburned)
+
+#covert ignitionCode to row names and change to matrix
+rownames(foa10_sumAreaW) <- foa10_sumAreaW$IgnitionCode
+foa10_sumAreaW$IgnitionCode <- NULL
+foa10_sumAream <- as.matrix(foa10_sumAreaW)
+
+rownames(foa12_sumAreaW) <- foa12_sumAreaW$IgnitionCode
+foa12_sumAreaW$IgnitionCode <- NULL
+foa12_sumAream <- as.matrix(foa12_sumAreaW)
+
+#convert from m^2 to ha
+foa10_sumAreaHA <- foa10_sumAream/10000
+foa12_sumAreaHA <- foa12_sumAream/10000
+
+#calcualte total affected area per year (10,000 fire years)
+foa10_sumHAyr <- data.frame(foa10_sumAreaHA/10000)
+foa12_sumHAyr <- data.frame(foa12_sumAreaHA/10000)
+
+#write.csv(foa10_sumHAyr, "foa10_sumHAyr.csv")
+#write.csv(foa12_sumHAyr, "foa12_sumHAyr.csv")
+
+#get mean affected for each fire by dividing sum by total number of fires in each run
+# foa10_meanHA <- foa10_sumAreaHA/length(unique(foa10sub$FIRENO))
+# foa12_meanHA <- foa12_sumAreaHA/length(unique(foa12sub$FIRENO))
+
+
+```
+
+```{r}
+#Add a row_sum col to compare total amount burned by fires ignited in each veg type (avg/yr)
+foa10_sumHAyr$row_sum <-  rowSums(foa10_sumHAyr)
+foa12_sumHAyr$row_sum <- rowSums(foa12_sumHAyr)
+
+dif_row_sums_with_totals <- foa10_sumHAyr - foa12_sumHAyr
+percDiff_row_sums_with_totals <- (foa10_sumHAyr - foa12_sumHAyr)/(foa12_sumHAyr)*100
+```
+
+
+measure the difference in transmission 
+```{r}
+foa_dif <- foa10_sumAreaHA - foa12_sumAreaHA
+foa_dif_yr <- foa10_sumHAyr - foa12_sumHAyr
+#calculate percent difference compared to the uninvaded landscape (% increase when positive)
+percDif <- (foa10_sumAreaHA - foa12_sumAreaHA)/(foa12_sumAreaHA)*100
+AbspercDif <- abs(foa10_sumAreaHA - foa12_sumAreaHA)/(foa12_sumAreaHA)*100
+
+```
+
+## graph the % differences as a matrix
+
+convert to long format for graphing
+```{r}
+library(reshape2)
+
+longData<-melt(percDif)
+colnames(longData) <- c("ignition", "affected", "dif_perc")
+
+#add col for binned dif_perc values
+# Define category breaks
+breaks <- c(-1, 1, 5, 10, 15, 20, 25, 30)
+# longData$valueDiscr <- cut(longData$dif_perc,
+#                        breaks = breaks,
+#                        right = FALSE)
+
+
+
+colfunc <- colorRampPalette(c("black", "white"))
+
+
+# discr_colors <- rev(c("#AF490F", "#BD682F", "#C4783F", "#D3975F", "#DAA76F", "#E1B67E", "#F0D69F"))
+discr_colors <- rev(colfunc(7))
+```
+
+```{r fig.height=6.7, fig.width=8}
+#discrete
+(gg1 <- ggplot(longData, aes(x = affected, y = ignition)) + 
+  # geom_raster(dif_perc))) + # continues fill
+  geom_raster(aes(fill=cut(dif_perc, breaks, right = FALSE))) + 
+  scale_fill_manual(values = discr_colors)) +
+  labs(x="Burned vegetation type", y="Ignition vegetation type") +
+  theme_bw(base_size = 13)+
+  theme(axis.text.x=element_text(angle = -90, hjust = 0), legend.title=element_blank())
+
+
+
+
+# ggsave( "transmission_matrix_equalIgn.svg")
+# ggsave( "transmission_matrix_equalIgn.png", gg1, height = 7, width = 8)
+```
+
+
+
+Graph the difference in transmissions with igraph
+
+```{r}
+#svg(file="transmission_foa10_12_percDif_sameNumIgn.svg", width = 10, height = 8)
+colors <- c("#086375", "#b2b2b2", "#A06C18", "#883C0C", "#598B2C", "#d7ce91", "#ffd500", "#386641", "#a6c952")
+
+g <- graph_from_adjacency_matrix(AbspercDif, mode = "directed", weighted = TRUE)
+#summary(g)
+
+V(g)$size <- 5
+#change colors
+V(g)$color <- rev(colors)
+
+E(g)$width <- E(g)$weight/1.5
+
+E(g)$arrow.size <- 0
+
+#change line type so that % decreases are dashed - this should match the percDif matrix! 
+linetype <- replace(percDif, percDif < 0,3) 
+linetype <- replace(linetype, percDif >= 0,1)
+E(g)$lty <- as.vector(t(linetype)) #transpose linetype df for converting to vector
+
+  
+V(g)
+
+edge.start <- ends(g, es=E(g), names=F)[,1]
+edge.col <- V(g)$color[edge.start]
+
+(P_inv <- plot(g, vertex.label.color="black", vertex.frame.color="white", vertex.label.dist=2,
+layout=layout_in_circle, edge.color = edge.col, alpha = 0.5, edge.curved = .05, edge.label = round(E(g)$weight, digits = 1), edge.label.color = "black", vertex.label.family = "Calibri", edge.label.family = "Calibri"))
+
+```
+
+```{r}
+# write.csv(percDif, "percdif_foa10-foa12HA.csv")
+#write.csv(foa10_meanHA, "foa10_MeanArea_transmission_HA.csv")
+#write.csv(foa12_meanHA, "foa12_MeanArea_transmission_HA.csv")
+```

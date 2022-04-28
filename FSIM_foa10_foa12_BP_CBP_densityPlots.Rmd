@@ -1,0 +1,239 @@
+---
+title: "FSIM_spatial_analysis"
+author: "Claire Tortorelli"
+date: "12/20/2020"
+output: html_document
+---
+
+Analyses for BME BP and FIL > 4ft
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(here)
+library(ggridges)
+library(cowplot)
+library(ggridges)
+```
+
+read in RData
+```{r}
+load(here("saptialcsv_rawdata", "AllData_wFIL_120m_point_extract_cleaned.RData")) 
+#dfsub
+```
+
+
+```{r}
+# summary(dfsub)
+# 
+# #add column for BP * FIL > 4ft
+# dfsub$foa10FILBP <- dfsub$foa10FILg4 * dfsub$foa10BP
+# dfsub$foa12FILBP <- dfsub$foa12FILg4 * dfsub$foa12BP
+# dfsub$difFILBP <- dfsub$foa10FILBP - dfsub$foa12FILBP
+
+```
+
+```{r}
+#calcualte area burned at each flame length
+studyArea <- nrow(dfsub)*1.44 #each cell represents 1.44 ha
+
+sum(dfsub$foa10FILg4*1.44) #3697106, 54.9% of ecoregion
+sum(dfsub$foa12FILg4*1.44) #3622070, 53.8% of ecoregion
+
+sum(dfsub$foa10FIL8*1.44) #748102.2, 11.1%
+sum(dfsub$foa12FIL8*1.44) #737993, 11.0%
+
+#percent difference
+(sum(dfsub$foa10FILg4*1.44)-sum(dfsub$foa12FILg4*1.44))/sum(dfsub$foa12FILg4*1.44)*100 #2.1
+(sum(dfsub$foa10FIL8*1.44)-sum(dfsub$foa12FIL8*1.44))/sum(dfsub$foa12FIL8*1.44) *100 #1.4
+
+#difference in BP
+mean(dfsub$foa10BP) - mean(dfsub$foa12BP)
+```
+
+summarize burn probability just in invaded areas
+```{r}
+#create a df with only invaded areas where we increased fuels between landscapes
+invaded.df <- dfsub[which(dfsub$alteredFM2 == 1),]
+invaded.df$reclass <- "Invaded"
+
+invaded.df.sum <- invaded.df %>%
+    summarize(mean_F4dif = mean(difFILg4), #calculate absolute difference FIL > 4gt
+              mean_BPdif = mean(difBP), #calculate absolute difference BP
+              # mean_FLBPdif = mean(dfsub$difFILBP), #calculate absolute difference BP*FL
+              mean_F8dif = mean(difFIL8),
+              F4_percdif = ((mean(foa10FILg4) - mean(foa12FILg4)) / (mean(foa12FILg4)))*100,
+              F8_percdif = ((mean(foa10FIL8) - mean(foa12FIL8)) / (mean(foa12FIL8)))*100,
+              BP_percdif = ((mean(foa10BP) - mean(foa12BP)) / (mean(foa12BP)))*100,
+              # FLBP_percdif = ((mean(dfsub$foa10FILBP) - mean(dfsub$foa12FILBP)) / (mean(dfsub$foa12FILBP)))*100,
+              n = n() #count
+              )  
+
+#summary(invaded.df)
+nrow(invaded.df)/nrow(dfsub)
+```
+
+
+summarize mean BP and MI by EVT (vegetation type) for the ecoregion - ignore NAs for calculating percent difference
+```{r}
+
+sum.EVTall <- dfsub %>%
+  group_by(reclass) %>%
+    summarize(mean_F410 = mean(foa10FILg4),
+              mean_F412 = mean(foa12FILg4),
+              mean_BP10 = mean(foa10BP),
+              mean_BP12 = mean(foa12BP),
+              mean_F810 = mean(foa10FIL8),
+              mean_F812 = mean(foa12FIL8),
+              mean_F4dif = mean(difFILg4), #calculate absolute difference FIL > 4ft
+              mean_BPdif = mean(difBP), #calculate absolute difference BP
+              mean_F8dif = mean(difFIL8),#calculate absolute difference FIL > 8ft  
+              F4_percdif = ((mean(foa10FILg4) - mean(foa12FILg4)) / (mean(foa12FILg4)))*100,
+              BP_percdif = ((mean(foa10BP) - mean(foa12BP)) / (mean(foa12BP)))*100,
+              F8_percdif = ((mean(foa10FIL8) - mean(foa12FIL8)) / (mean(foa12FIL8)))*100,
+              n = n() #count
+              )  
+
+#write.csv(sum.EVTall, "meanBP.MI.FH.by.EVT.for.all.burnable.areas.csv")
+```
+
+```{r}
+#explore why sparse veg values are so high?
+# sparsevegn <- dfsub %>% subset(reclass == "Sparsely vegetated") %>%
+#   group_by(PRE_FM40) %>%
+#   summarize(n = n())
+#looks like LANDFIRE models most of these areas as FM122, GR2! 
+
+# recentydistn <- dfsub %>% subset(reclass == "Recently Disturbed") %>%
+#   group_by(PRE_FM40) %>%
+#   summarize(n = n())
+
+#  
+
+```
+
+There's hardly any differnce in area burned at >8ft so sticking with 4ft
+
+subset and gather dataframes to plot invaded (foa10) and uninvaded (foa12) runs together for comparison
+```{r}
+
+#FIL>4 - extract OID, reclass, and vars (reclassified vegtype)
+dfsubl_F4 <- dfsub[,c(2,11,49,48)]
+dfsubl_F4 <- dfsubl_F4 %>% gather("FSIMrun", "F4", foa10FILg4, foa12FILg4)
+
+#BP 
+dfsubl_BP <- dfsub[,c(2,5,11,17)]
+dfsubl_BP <- dfsubl_BP %>% gather("FSIMrun", "BP", foa10BP, foa12BP)
+
+
+#FILBP
+dfsubl_FLBP <- dfsub[,c(2,11,51,52)]
+dfsubl_FLBP <- dfsubl_FLBP %>% gather("FSIMrun", "FLBP", foa12FILBP, foa10FILBP)
+
+
+
+```
+
+
+
+
+
+organize means for plotting with the density graphs
+```{r}
+
+densitymeansF4 <- dfsubl_F4 %>% group_by(reclass, FSIMrun) %>%
+  summarise(mean = mean(F4))
+
+densitymeansBP <- dfsubl_BP %>% group_by(reclass, FSIMrun) %>%
+  summarise(mean = mean(BP))
+
+densitymeansFLBP <- dfsubl_FLBP %>% group_by(reclass, FSIMrun) %>%
+  summarise(mean = mean(FLBP))
+
+
+
+```
+
+
+### Plot
+plot MI densities for all veg types for invaded and uninvaded landscapes
+
+Function to plot burn metrics vs vegtype in ggplot
+```{r fig.height=7, fig.width=6}
+vegcolors <- c("#086375", "#b2b2b2", "#A06C18", "#883C0C", "#598B2C", "#d7ce91", "#ffd500", "#386641", "#a6c952")
+fsimcolors <- c("#cc5500", "#323232")
+fsimcolors2 <- c("#cc4125", "#323232")
+
+ggp_function <- function(df, x.var, df2){
+  ggp <- ggplot(df, aes(x = x.var, y = reclass, color = FSIMrun, fill = reclass)) +
+
+  geom_density_ridges(rel_min_height = 0.01, alpha = 0.3, quantile_lines = TRUE, quantiles = 2, scale = 1.1)+
+        theme(plot.title = element_text(size = 12)) +
+  scale_fill_manual(values = vegcolors)+ 
+    scale_alpha_manual(values = c(0.1, 0.5))+
+  theme_bw(base_size = 13)+
+  theme(panel.grid.minor = element_blank
+        (), panel.grid.major = element_blank(),
+        axis.title.y = element_blank(),
+       legend.position = "none")
+  
+  gp_point <- ggp + geom_point(aes(x = mean, #add means as points to each density plot
+                   y = reclass,
+                   color = FSIMrun),
+                   size = 2.5,
+                   shape = 17,
+                   data = df2)+
+       scale_color_manual(values = fsimcolors)
+  
+  return(gp_point)
+  
+  }
+
+
+```
+
+Reverse order of vegtypes for plotting
+```{r}
+dfsubl_F4$reclass <- fct_rev(factor(dfsubl_F4$reclass))
+dfsubl_BP$reclass <- fct_rev(factor(dfsubl_BP$reclass))
+dfsubl_FLBP$reclass <- fct_rev(factor(dfsubl_FLBP$reclass))
+levels(dfsubl_BP$reclass)
+```
+
+plot for burn prob, mean intensity, and fire hazard
+```{r fig.height=7, fig.width=6}
+
+
+p_bp <- ggp_function(df = dfsubl_BP, x.var = dfsubl_BP$BP, df2 = densitymeansBP) + xlab('Burn prob.') + ggtitle("Annual burn prob.") +  scale_x_continuous(limits = c(0, 0.035))
+
+
+p_f4 <- ggp_function(df = dfsubl_F4, x.var = dfsubl_F4$F4, df2 = densitymeansF4) + xlab('Flame-length prob. >1.2m') + ggtitle("Flame-length prob. >1.2m")
+
+
+# 
+# p_flbp <- ggp_function(df = dfsubl_FLBP, x.var = dfsubl_FLBP$FLBP, df2 = densitymeansFLBP) + xlab('Joint prob.') + ggtitle("Joint prob.")+  theme(axis.title.y=element_blank(),
+#         axis.text.y=element_blank())+  scale_x_continuous(limits = c(0, 0.026))
+# 
+
+```
+
+```{r}
+#library(egg)
+P_all <- ggarrange(p_bp, 
+          p_f4 + 
+               theme(axis.text.y = element_blank(),
+                     #axis.ticks.y = element_blank(),
+                     axis.title.y = element_blank() ),
+                nrow = 1)
+```
+
+
+save plot
+
+```{r}
+#save plot
+svg(file = 'density_plots_by_vegTypesFL.svg', width = 7, height = 6.5)
+P_all
+dev.off()
+```
+
+
