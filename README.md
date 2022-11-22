@@ -75,10 +75,10 @@ Point grid at 120m resolution, column descriptions below:
 
 <br>
 <br>
-### **foa10_XFirePerimsIntersect.csv & foa12_XFirePerimsIntersect.csv**
+
+### foa10_XFirePerimsIntersect.csv & foa12_XFirePerimsIntersect.csv
 
 Descriptions for columns below:
-
 
 
 •	Shape_Area – size of intersecting polygon between vegetation types for each fire
