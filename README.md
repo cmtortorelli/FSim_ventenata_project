@@ -73,11 +73,9 @@ Point grid at 120m resolution, column descriptions below:
 
 
 
-
-#### **foa10_XFirePerimsIntersect.csv
-& foa12_XFirePerimsIntersect.csv**
-
-
+<br>
+<br>
+### **foa10_XFirePerimsIntersect.csv & foa12_XFirePerimsIntersect.csv**
 
 Descriptions for columns below:
 
