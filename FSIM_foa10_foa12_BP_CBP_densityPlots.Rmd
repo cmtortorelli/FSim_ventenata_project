@@ -17,7 +17,7 @@ library(ggridges)
 
 read in RData
 ```{r}
-load(here("saptialcsv_rawdata", "AllData_wFIL_120m_point_extract_cleaned.RData")) 
+load(here("saptialcsv_rawdata", "AllData_cleaned_2022.RData")) 
 #dfsub
 ```
 

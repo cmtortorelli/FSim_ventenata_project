@@ -1,0 +1,82 @@
+---
+title: "FSIM_spatial_analysis"
+author: "Claire Tortorelli"
+date: "12/20/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(here)
+library(ggridges)
+```
+
+
+```{r}
+df <- read_csv(here("saptialcsv_rawdata", "AllData_120m_point_extract.csv")) 
+
+```
+
+Set up dataframe for analyses & plotting
+```{r}
+#remove non-vegetated areas (these areas should not burn e.g. water, snow/ice, urban areas)
+dfsub <- df[-which(df$reclass == "Non-vegetated"),]
+
+
+summary(as.factor(dfsub$reclass))
+```
+
+
+```{r}
+
+# remove rows with non-burnable fuel types: 91, 92, 93, 98, & 99 for the uninvaded & invaded landscape
+#these areas could not have burned so their zeros are not relevant
+
+dfsub <- dfsub[-which(dfsub$Post_FM40 < 100 & dfsub$PRE_FM40 < 100),]
+
+summary(as.factor(dfsub$reclass))
+
+count(dfsub, PRE_FM40) #266 nonburnable cells were converted to burnable between the invaded and uninvaded runs
+
+
+```
+
+calculate difference in BP & MI
+```{r}
+#get difference in BP & MI between invaded and uninvaded run
+dfsub$difMI <- dfsub$foa10MI - dfsub$foa12MI
+dfsub$difBP <- dfsub$foa10BP - dfsub$foa12BP
+
+#get percent difference in BP and MI between invaded and uninvaded run (%higher bp)
+
+dfsub$percdifMI <- ((dfsub$foa10MI - dfsub$foa12MI)/dfsub$foa12MI)*100
+dfsub$percdifBP <- ((dfsub$foa10BP - dfsub$foa12BP)/dfsub$foa12BP)*100
+```
+
+calculate wildfire hazard
+```{r}
+dfsub$foa10FH <- dfsub$foa10MI * dfsub$foa10BP
+dfsub$foa12FH <- dfsub$foa12MI * dfsub$foa12BP
+
+dfsub$difFH <- dfsub$foa10FH - dfsub$foa12FH
+
+#get percent difference in fire hazard between invaded and uninvaded run (%higher fh)
+
+dfsub$percdifFH <- ((dfsub$foa10FH - dfsub$foa12FH)/dfsub$foa12FH)*100
+```
+
+add columns for x and y coordinates
+```{r}
+dfsub <- dfsub %>% separate(OID, c("X","Y"), sep = " ", remove = FALSE)
+dfsub$X <- as.numeric(dfsub$X)
+dfsub$Y <- as.numeric(dfsub$Y)
+```
+
+save Rdata
+```{r}
+save(dfsub, file = "AllData_120m_point_extract_cleaned.RData")
+
+```
+
+

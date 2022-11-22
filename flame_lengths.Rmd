@@ -1,0 +1,118 @@
+---
+title: "FSIM_spatial_analysis"
+author: "Claire Tortorelli"
+date: "12/20/2020"
+output: html_document
+---
+
+Add flame lengths (FIL) to data frame
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(raster)
+library(landscapemetrics)
+library(here)
+library(ggplot2)
+library(cowplot)
+library(grid)
+library(gridExtra) 
+library(mgcv)
+```
+
+
+
+
+read in RData
+```{r}
+load(here("saptialcsv_rawdata", "AllData_120m_point_extract_cleaned.RData")) 
+#dfsub
+```
+
+
+
+Covert to spatial data
+```{r}
+# #convert to spatial points
+coords <- data.frame(dfsub[,3:4])
+sp = SpatialPoints(coords)
+spdf = SpatialPointsDataFrame(sp, dfsub)
+
+```
+
+
+```{r}
+# import FL raster as raster stack
+rastlist <- list.files(path = "C:\\Users\\tortorec\\Box Sync\\OSU\\VEDU project\\FSim_proj\\FSim_ventenata_project\\saptialcsv_rawdata\\FL_rasters", pattern='.tif$', all.files=TRUE, full.names=TRUE)
+
+allrasters <- stack(rastlist)
+
+plot(allrasters[[1]])
+
+
+
+```
+
+
+
+extract flame lengths to spatial points df
+```{r}
+#assign spdf to the same coordinate system as the rasters
+crs(spdf) <- crs(allrasters[[1]])
+
+# plot(allrasters[[1]])
+# plot(spdf[1:100,], add = TRUE) #looks good!
+
+allrasterdf <- raster::extract(allrasters, spdf)
+allrasterdf <- as.data.frame(allrasterdf)
+
+spdf.all <- as.data.frame(cbind(spdf, allrasterdf))
+dfsub <- spdf.all[,1:38]
+
+```
+
+combine into similar categories
+```{r}
+#0-4 ft flame lengths
+dfsub$foa10FIL04 <- dfsub$foa10FIL1 + dfsub$foa10FIL2
+dfsub$foa12FIL04 <- dfsub$foa12FIL1 + dfsub$foa12FIL2
+
+#4-8 ft flame lengths
+dfsub$foa10FIL48 <- dfsub$foa10FIL3 + dfsub$foa10FIL4
+dfsub$foa12FIL48 <- dfsub$foa12FIL3 + dfsub$foa12FIL4
+
+#>8 ft flame lengths
+dfsub$foa10FIL8 <- dfsub$foa10FIL5 + dfsub$foa10FIL6
+dfsub$foa12FIL8 <- dfsub$foa12FIL5 + dfsub$foa12FIL6
+
+#>4 flame lengths
+dfsub$foa10FILg4 <- dfsub$foa10FIL48 + dfsub$foa10FIL8
+dfsub$foa12FILg4 <- dfsub$foa12FIL48 + dfsub$foa12FIL8
+```
+
+add difference in FIL category columns
+```{r}
+dfsub$difFIL04 <- dfsub$foa10FIL04 - dfsub$foa12FIL04
+dfsub$difFIL48 <- dfsub$foa10FIL48 - dfsub$foa12FIL48
+dfsub$difFIL8 <- dfsub$foa10FIL8 - dfsub$foa12FIL8
+dfsub$difFILg4 <- dfsub$foa10FILg4 - dfsub$foa12FILg4
+#summary(dfsub)
+
+
+```
+
+```{r}
+save(dfsub, file = "AllData_wFIL_120m_point_extract_cleaned.RData")
+
+```
+
+
+
+remove unnecessary columns
+```{r}
+dfsub = subset(dfsub, select = -c(foa10FH, foa12FH, difFH, percdifFH, percdifMI, percdifBP,foa10FIL04, foa12FIL04, difFIL04, difFIL48, foa10FIL48, foa12FIL48))
+
+save(dfsub, file = "AllData_cleaned_2022.RData")
+```
+
+

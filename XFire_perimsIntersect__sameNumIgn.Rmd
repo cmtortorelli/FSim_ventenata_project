@@ -14,9 +14,9 @@ library(here)
 Read in XFire perimieter intersect data with ignitions for fires greater than 100ha
 ```{r}
 #read in FSIm run 10 perims
-foa10 <- read_csv(here("saptialcsv_rawdata", "foa10_XFirePerimsIntersect.csv"))
+foa10 <- read_csv(here("spatialcsv_rawdata", "foa10_XFirePerimsIntersect.csv"))
 
-foa12 <- read_csv(here("saptialcsv_rawdata", "foa12_XFirePerimsIntersect.csv"))
+foa12 <- read_csv(here("spatialcsv_rawdata", "foa12_XFirePerimsIntersect.csv"))
 ```
 
 
