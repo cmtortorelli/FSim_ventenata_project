@@ -7,7 +7,7 @@ FSim simulated fire comparisons between ventenata invaded and uninvaded landscap
 ### Metadata
 Supporting data are available from Open Science Framework DOI 10.17605/OSF.IO/9AWTS 
 
-#### **AllData_cleaned_2022.RData**
+### AllData_cleaned_2022.RData
 
 Point grid at 120m resolution, column descriptions below:
 
